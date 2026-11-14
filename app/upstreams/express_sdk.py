@@ -21,6 +21,7 @@ from message_processing import (
     DEFAULT_IMAGE_PREFILL_NUDGE,
 )
 from http_options import get_http_options
+from key_proxy import proxy_for_record
 import model_capabilities as mc
 from runtime_state import app_state
 import config as app_config
@@ -334,9 +335,12 @@ class ExpressSDKUpstream(BaseUpstream):
         model_to_call = resolve_express_model_path(
             base_model_name, ctx["inj_settings"], key_project_id=key_record.get("project_id", "")
         )
+        key_proxy = proxy_for_record(key_record)
+        if key_proxy and app_state.get_setting("debug_outbound", False):
+            print(f"🔀 [Key 出口] Key #{key_record.get('index', 0) + 1} → {key_proxy}")
         client_to_use = create_express_genai_client(
             api_key=express_api_key,
-            http_options=get_http_options(),
+            http_options=get_http_options(proxy_url=key_proxy),
         )
         _log_resolved_endpoint(client_to_use)
         if model_to_call != base_model_name:
@@ -349,7 +353,7 @@ class ExpressSDKUpstream(BaseUpstream):
             "fallback_client_factory": (
                 lambda: create_express_genai_client(
                     api_key=express_api_key,
-                    http_options=get_http_options(),
+                    http_options=get_http_options(proxy_url=key_proxy),
                 )
             ),
         }

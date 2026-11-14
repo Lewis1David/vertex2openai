@@ -60,6 +60,18 @@ git apply -3 /path/to/v2o-local-changes.patch
 git add -A && git commit -m "feat(proxy): outbound proxy pool"
 ```
 
+## 按 Key 绑定出口（可选）
+
+一行环境变量，顺序与控制台 Key 列表一致：
+
+```yaml
+- VERTEX_EXPRESS_API_KEY=key1,key2
+- EXPRESS_KEY_PROXIES=http://mihomo:7901,http://mihomo:7904
+```
+
+第 1 条 key 走 7901，第 2 条走 7904；没配置到的 key（或空项）回落到控制台「出站代理」。
+**改控制台 Key 顺序会改变对应关系**，增删 key 时记得同步这一行。
+
 ## 发布与回滚
 
 ```yaml

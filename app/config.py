@@ -11,6 +11,8 @@ class AppSettings(BaseSettings):
     ROUNDROBIN: bool = True
     SAFETY_SCORE: bool = False
     PROXY_URL: Optional[str] = None
+    # 按 Key 绑定出口：逗号分隔，顺序与控制台 Key 列表一致
+    EXPRESS_KEY_PROXIES: Optional[str] = None
     SSL_CERT_FILE: Optional[str] = None
     VERTEX_BASE_URL: Optional[str] = None
 
@@ -38,6 +40,12 @@ MODELS_CONFIG_URL = _settings.MODELS_CONFIG_URL
 ROUNDROBIN = _settings.ROUNDROBIN
 SAFETY_SCORE = _settings.SAFETY_SCORE
 PROXY_URL = _settings.PROXY_URL
+
+raw_key_proxies = _settings.EXPRESS_KEY_PROXIES
+if raw_key_proxies:
+    EXPRESS_KEY_PROXIES_VAL = [item.strip() for item in raw_key_proxies.split(",")]
+else:
+    EXPRESS_KEY_PROXIES_VAL = []
 SSL_CERT_FILE = _settings.SSL_CERT_FILE
 VERTEX_BASE_URL = _settings.VERTEX_BASE_URL
 

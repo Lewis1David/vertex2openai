@@ -20,13 +20,15 @@ DEFAULT_HTTPX_TIMEOUT = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool
 def get_http_options(
     base_url: Optional[str] = None,
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    proxy_url: Optional[str] = None,
 ) -> types.HttpOptions:
     """构造 google-genai HTTP 选项：长思考超时、代理、自定义证书、base_url。
 
     代理每次调用都向代理池现取，因此控制台切换代理后无需重启即可生效；
     pool 模式下还会按策略轮换出口 IP。
     """
-    proxy_url = proxy_pool.pick()
+    # 传了 proxy_url 就用它（按 Key 固定出口），否则向代理池现取
+    proxy_url = proxy_url or proxy_pool.pick()
 
     client_args = {"timeout": DEFAULT_HTTPX_TIMEOUT}
     if proxy_url:
