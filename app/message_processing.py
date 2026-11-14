@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import config as app_config
 import model_capabilities as mc
 from runtime_state import app_state
+from proxy_manager import proxy_pool
 from signature_store import (
     signature_store,
     image_signature_store,
@@ -2050,7 +2051,8 @@ def _is_blocked_host(host: str) -> bool:
 def fetch_remote_image(url: str, timeout: float = 10.0) -> Optional[Tuple[bytes, str]]:
     from urllib.parse import urlparse
 
-    check_host = not app_config.PROXY_URL
+    _proxy_url = proxy_pool.pick()
+    check_host = not _proxy_url
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https"):
@@ -2059,8 +2061,8 @@ def fetch_remote_image(url: str, timeout: float = 10.0) -> Optional[Tuple[bytes,
             raise ValueError("目标地址指向内网/环回/链路本地，已拒绝")
 
         client_args = {"timeout": timeout, "follow_redirects": False}
-        if app_config.PROXY_URL:
-            client_args["proxy"] = app_config.PROXY_URL
+        if _proxy_url:
+            client_args["proxy"] = _proxy_url
         if getattr(app_config, "SSL_CERT_FILE", None):
             client_args["verify"] = app_config.SSL_CERT_FILE
 

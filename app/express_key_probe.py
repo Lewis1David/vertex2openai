@@ -9,6 +9,7 @@ import httpx
 
 import config as app_config
 from runtime_state import app_state
+from proxy_manager import proxy_pool
 
 GENERATE_CONTENT_URL = (
     "https://aiplatform.googleapis.com/v1/publishers/google/models/{model}:generateContent"
@@ -19,8 +20,9 @@ PROBE_TIMEOUT_SECONDS = 15.0
 
 def _client_args() -> dict:
     args = {"timeout": PROBE_TIMEOUT_SECONDS}
-    if app_config.PROXY_URL:
-        args["proxy"] = app_config.PROXY_URL
+    _proxy_url = proxy_pool.pick()
+    if _proxy_url:
+        args["proxy"] = _proxy_url
     if app_config.SSL_CERT_FILE:
         args["verify"] = app_config.SSL_CERT_FILE
     return args

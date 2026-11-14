@@ -17,6 +17,7 @@ from routes import models_api, chat_api
 from logger import rt_logger, stats, call_recorder
 import config
 from runtime_state import app_state
+from proxy_manager import proxy_pool, normalize_proxy
 import model_capabilities as mc
 from model_loader import get_express_models, get_model_categories
 
@@ -58,6 +59,8 @@ async def lifespan(app: FastAPI):
               "请立刻改成强口令。")
 
     app_state.import_env_express_keys_once(config.VERTEX_EXPRESS_API_KEY_VAL)
+    proxy_pool.load_from_settings(app_state.get_settings())
+    print(f"🌍 [出站代理] 已加载控制台配置：{proxy_pool.describe()}")
     if express_key_manager.get_total_keys() > 0:
         print(f"✅ [密钥配置] 已加载 {express_key_manager.get_total_keys()} 个 Express API Key。")
     else:
@@ -923,6 +926,39 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <div id="h_loc" class="helpbox">
               决定 Express 标准模式请求钉定到哪个区域，优先使用当前选中 Key 自有的 Project ID 拼装完整资源路径；若钉定路径失败会自动回退裸模型名重试一次。
             </div>
+          </div>
+
+          <div class="card p-5">
+            <div class="card-hd">
+              <div class="card-title"><span class="card-dot"></span>出站代理 / 出口 IP<span class="helpq" onclick="hlp(this,'h_pxy')">?</span></div>
+              <span class="code-tag" id="proxy-badge">--</span>
+            </div>
+            <div class="set-row" style="padding:2px 0">
+              <span class="set-lbl">代理模式</span>
+              <select id="proxy_mode" class="inp" style="max-width:230px" onchange="onProxyModeChange()">
+                <option value="env">跟随环境变量 PROXY_URL</option>
+                <option value="single">固定单代理</option>
+                <option value="pool">代理池轮换</option>
+                <option value="off">强制直连（忽略代理）</option>
+              </select>
+            </div>
+            <div id="proxy-list-wrap">
+              <div class="lbl mt-2 mb-1.5">代理列表（每行一条，支持 http / https / socks5，可带账号密码）</div>
+              <textarea id="proxy_pool" rows="4" class="inp log" placeholder="http://user:pass@1.2.3.4:8080&#10;socks5://5.6.7.8:1080"></textarea>
+              <div class="set-row" style="padding:6px 0 0">
+                <span class="set-lbl">轮换策略</span>
+                <select id="proxy_strategy" class="inp" style="max-width:180px">
+                  <option value="round_robin">顺序轮换</option>
+                  <option value="random">随机</option>
+                </select>
+              </div>
+            </div>
+            <div class="flex gap-2 mt-3">
+              <button class="btn px-4 py-1.5 text-xs" onclick="saveProxy()">💾 保存并生效</button>
+              <button class="btn-soft px-4 py-1.5 text-xs" onclick="testProxy()">🔌 测试连通性</button>
+            </div>
+            <div id="proxy-result" class="text-xs text-muted mt-2" style="white-space:pre-wrap;line-height:1.7"></div>
+            <div id="h_pxy" class="helpbox">保存后立即生效，无需重启：Express 通道在每次构造上游客户端时取代理（含每次重试），Cookie 通道每个请求取一次。代理池模式下失败线路自动冷却 60~600 秒后重新参与轮换；「跟随环境变量」模式仍读取 <code>PROXY_URL</code>，兼容旧部署。</div>
           </div>
 
           <div class="card p-5">
@@ -1930,7 +1966,66 @@ async function clearCallRecords(){
 $('project-input').addEventListener('input',function(e){ var v=e.target.value.trim(); var m=v.match(/[?&]project=([^&]+)/)||v.match(/\/projects\/([^\/]+)/); if(m) e.target.value=m[1]; });
 $('image_aspect_ratio').addEventListener('change', function(e){ curAR=e.target.value; });
 
-fetchStats(); fetchRecords(); setInterval(fetchStats,3000); loadRuntime(); loadParams(); loadExpressKeys();
+/* ---------------- 出站代理（热切换 + 连通性自检） ---------------- */
+function onProxyModeChange(){
+  var m=$('proxy_mode').value;
+  var w=$('proxy-list-wrap');
+  if(w) w.style.display=(m==='single'||m==='pool')?'':'none';
+}
+function renderProxyState(s){
+  if(!s) return;
+  $('proxy_mode').value=s.mode||'env';
+  $('proxy_strategy').value=s.strategy||'round_robin';
+  if(Array.isArray(s.proxies)) $('proxy_pool').value=s.proxies.join('\n');
+  $('proxy-badge').textContent = (s.mode==='off') ? '直连'
+    : (s.active ? ('出口 '+s.active) : (s.mode==='env' ? '未配置' : '待命'));
+  onProxyModeChange();
+  var lines=[];
+  if(s.mode==='pool'||s.mode==='single'){
+    (s.health||[]).forEach(function(h){
+      lines.push(h.proxy+'  '+(h.cooldown_left>0 ? ('⏸ 冷却 '+h.cooldown_left+'s｜'+(h.last_error||'')) : '✅ 可用'));
+    });
+  }else if(s.mode==='env'){
+    lines.push(s.env_configured ? ('环境变量代理：'+s.env_proxy) : '未设置 PROXY_URL，当前直连');
+  }else{
+    lines.push('已强制直连，所有出站请求忽略代理');
+  }
+  $('proxy-result').textContent=lines.join('\n');
+}
+function proxyListFromUI(){
+  return ($('proxy_pool').value||'').split('\n')
+    .map(function(x){return x.trim();})
+    .filter(function(x){return x && x.charAt(0)!=='#';});
+}
+async function loadProxy(){
+  try{ renderProxyState(await (await fetch('/api/proxy')).json()); }catch(e){}
+}
+async function saveProxy(){
+  var body={mode:$('proxy_mode').value, proxies:proxyListFromUI(), strategy:$('proxy_strategy').value};
+  try{
+    var r=await fetch('/api/proxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json();
+    if(r.ok){ renderProxyState(j); toast('✅ 代理设置已保存并生效'); }
+    else toast('❌ '+(j.error||'保存失败'));
+  }catch(e){ toast('❌ 网络请求失败'); }
+}
+async function testProxy(){
+  var list=proxyListFromUI();
+  $('proxy-result').textContent='⏳ 正在测试'+(list.length?(' '+list.length+' 条代理'):'直连')+'…';
+  try{
+    var r=await fetch('/api/proxy/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({proxies:list})});
+    var j=await r.json();
+    if(!r.ok){ $('proxy-result').textContent='❌ '+(j.error||'测试失败'); return; }
+    $('proxy-result').textContent=(j.results||[]).map(function(x){
+      var detail = x.ok
+        ? (x.ip ? ('出口 IP '+x.ip+' · '+x.latency_ms+' ms') : ('可连通（Google 204 探针）· '+x.latency_ms+' ms'))
+        : (x.error||'失败');
+      return (x.ok?'✅ ':'❌ ')+(x.proxy||'直连')+'  '+detail;
+    }).join('\n');
+  }catch(e){ $('proxy-result').textContent='❌ 网络请求失败'; }
+}
+
+fetchStats(); fetchRecords(); setInterval(fetchStats,3000); loadRuntime(); loadParams(); loadExpressKeys(); loadProxy();
 </script>
 </body>
 </html>
@@ -2042,6 +2137,53 @@ async def update_settings_api(request: Request, _auth: bool = Depends(require_au
         return JSONResponse(status_code=400, content={"error": "请求体必须是 JSON 对象。"})
     updated = app_state.update_settings(patch)
     return JSONResponse(content=updated)
+
+
+# ---------------------------------------------------------------- 出站代理（热切换）
+
+class ProxySettingsBody(BaseModel):
+    mode: str = "env"
+    proxies: list = []
+    strategy: str = "round_robin"
+
+
+class ProxyTestBody(BaseModel):
+    proxies: Optional[list] = None
+
+
+@app.get("/api/proxy")
+async def get_proxy_api(_auth: bool = Depends(require_auth)):
+    return JSONResponse(content=proxy_pool.snapshot(reveal=True))
+
+
+@app.post("/api/proxy")
+async def save_proxy_api(body: ProxySettingsBody, _auth: bool = Depends(require_auth)):
+    try:
+        proxy_pool.apply(body.mode, body.proxies, body.strategy)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    app_state.update_settings({
+        "proxy_mode": proxy_pool.mode,
+        "proxy_pool": proxy_pool.items,
+        "proxy_strategy": proxy_pool.strategy,
+    })
+    print(f"🌍 [出站代理] 控制台已更新：{proxy_pool.describe()}")
+    payload = proxy_pool.snapshot(reveal=True)
+    payload["status"] = "success"
+    return JSONResponse(content=payload)
+
+
+@app.post("/api/proxy/test")
+async def test_proxy_api(body: ProxyTestBody, _auth: bool = Depends(require_auth)):
+    proxies = None
+    if isinstance(body.proxies, list) and body.proxies:
+        try:
+            proxies = [normalize_proxy(str(p)) for p in body.proxies if str(p).strip()]
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+    results = await proxy_pool.test_many(proxies)
+    return JSONResponse(content={"results": results})
 
 
 @app.get("/api/capabilities")

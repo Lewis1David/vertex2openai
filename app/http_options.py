@@ -3,6 +3,7 @@ import ssl
 import httpx
 from google.genai import types
 import config as app_config
+from proxy_manager import proxy_pool
 
 try:
     import aiohttp  # noqa: F401
@@ -20,10 +21,16 @@ def get_http_options(
     base_url: Optional[str] = None,
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
 ) -> types.HttpOptions:
-    """构造 google-genai HTTP 选项：长思考超时、代理、自定义证书、base_url。"""
+    """构造 google-genai HTTP 选项：长思考超时、代理、自定义证书、base_url。
+
+    代理每次调用都向代理池现取，因此控制台切换代理后无需重启即可生效；
+    pool 模式下还会按策略轮换出口 IP。
+    """
+    proxy_url = proxy_pool.pick()
+
     client_args = {"timeout": DEFAULT_HTTPX_TIMEOUT}
-    if app_config.PROXY_URL:
-        client_args["proxy"] = app_config.PROXY_URL
+    if proxy_url:
+        client_args["proxy"] = proxy_url
     if app_config.SSL_CERT_FILE:
         client_args["verify"] = app_config.SSL_CERT_FILE
 
@@ -31,8 +38,8 @@ def get_http_options(
         # aiohttp 模式下 async_client_args 会直接解包传给 ClientSession.request()，
         # 超时已由顶层 HttpOptions.timeout 控制，不能重复传 timeout。
         async_client_args = {}
-        if app_config.PROXY_URL:
-            async_client_args["proxy"] = app_config.PROXY_URL
+        if proxy_url:
+            async_client_args["proxy"] = proxy_url
         if app_config.SSL_CERT_FILE:
             async_client_args["ssl"] = ssl.create_default_context(cafile=app_config.SSL_CERT_FILE)
     else:

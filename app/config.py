@@ -91,6 +91,10 @@ DEFAULT_SETTINGS = {
     "resumable_enabled": True,
     "resumable_ttl_seconds": 1800,
     "resumable_max_streams": 200,
+    # 出站代理（控制台可热切换；env = 跟随环境变量 PROXY_URL，保持旧行为）
+    "proxy_mode": "env",              # env | off | single | pool
+    "proxy_pool": [],                 # ["http://user:pass@1.2.3.4:8080", "socks5://..."]
+    "proxy_strategy": "round_robin",  # round_robin | random
     # 按模型单独保存的参数覆盖：{ "模型ID": { 键: 值, ... } }
     "model_overrides": {},
 }

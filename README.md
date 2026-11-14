@@ -81,11 +81,29 @@ docker compose up -d
 | `API_KEY` | 是 | `123456` | 保护本代理的 Bearer Token，同时也是**控制台登录密码**。 |
 | `VERTEX_EXPRESS_API_KEY` | 否 | 空 | 初始导入的 Express API Key（多个用逗号分隔，仅首次启动导入一次，后续以控制台保存列表为准）。 |
 | `STATE_DIR` | 否 | `.` | `web_state.json` 存放目录，Docker 部署务必挂载持久化卷。 |
-| `PROXY_URL` | 否 | 空 | 上游请求使用的 HTTP / HTTPS / SOCKS 代理地址。 |
+| `PROXY_URL` | 否 | 空 | 上游请求使用的 HTTP / HTTPS / SOCKS 代理地址；控制台「出站代理」选「跟随环境变量」时生效，容器内一般用 `http://172.17.0.1:7890` 指向宿主机代理。 |
 | `SSL_CERT_FILE` | 否 | 空 | 自定义 SSL 证书路径。 |
 | `MODELS_CONFIG_URL` | 否 | 仓库 `vertexModels.json` | 自定义远程模型列表 JSON 地址。 |
 | `GOOGLE_COOKIE` | 否 | 空 | Cookie 直连模式的初始 Google Cookie（可在控制台热更新）。 |
 | `GOOGLE_PROJECT_ID` | 否 | 空 | Cookie 直连模式的初始 GCP Project ID（可在控制台热更新）。 |
+
+---
+
+## 出站代理（控制台热切换 / 代理池轮换）
+
+控制台「参数 → 全局基础设施 → 出站代理 / 出口 IP」卡片可以随时改代理，**保存即生效，不用重启容器**：
+
+| 模式 | 行为 |
+|---|---|
+| 跟随环境变量 | 读取 `PROXY_URL`，与旧版本行为一致（默认）。 |
+| 固定单代理 | 只用列表第一条，适合「就一个家宽/独享 IP」。 |
+| 代理池轮换 | 每构造一次上游客户端换一条线路（Express 每次重试都会重新取），支持顺序轮换 / 随机；失败线路自动冷却 60~600 秒后回归。 |
+| 强制直连 | 忽略一切代理，用于排障对比。 |
+
+- 列表每行一条，支持 `http://`、`https://`、`socks5://`，可带账号密码：`http://user:pass@1.2.3.4:8080`，省略协议时按 `http://` 处理。
+- 「测试连通性」会先从 `api.ipify.org` 取出口 IP，取不到时退到 `www.gstatic.com/generate_204` 只判连通（Google 同源，更贴近真实上游）。
+- 配置写入 `web_state.json`（权限 0600，与 Key / Cookie 同处），容器重建后仍在；代理账号密码在日志与接口快照里一律脱敏为 `***`。
+- `socks5://` 依赖 `httpx[socks]`（已包含在 `requirements.txt`）。
 
 ---
 

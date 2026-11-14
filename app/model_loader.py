@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, List, Dict, Optional
 
 import config as app_config
+from proxy_manager import proxy_pool
 
 _model_cache: Optional[Dict[str, Any]] = None
 _local_fallback_cache: Optional[Dict[str, Any]] = None
@@ -276,8 +277,9 @@ async def fetch_and_parse_models_config() -> Optional[Dict[str, Any]]:
             urls_to_try.append(fallback_url)
 
     client_args = {"timeout": 20.0}
-    if app_config.PROXY_URL:
-        client_args["proxy"] = app_config.PROXY_URL
+    _proxy_url = proxy_pool.pick()
+    if _proxy_url:
+        client_args["proxy"] = _proxy_url
     if app_config.SSL_CERT_FILE:
         client_args["verify"] = app_config.SSL_CERT_FILE
 

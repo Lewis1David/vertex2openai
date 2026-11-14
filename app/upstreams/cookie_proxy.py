@@ -24,6 +24,7 @@ from models import OpenAIRequest, normalize_content_part
 from upstreams.base import BaseUpstream
 from runtime_state import app_state
 import config as app_config
+from proxy_manager import proxy_pool
 import model_capabilities as mc
 from message_processing import (
     DEFAULT_IMAGE_PREFILL_NUDGE,
@@ -1932,8 +1933,9 @@ class CookieProxyUpstream(BaseUpstream):
             "timeout": httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=10.0),
             "follow_redirects": True,
         }
-        if app_config.PROXY_URL:
-            client_kwargs["proxy"] = app_config.PROXY_URL
+        _proxy_url = proxy_pool.pick()   # 每次请求现取，代理池模式下逐请求轮换出口 IP
+        if _proxy_url:
+            client_kwargs["proxy"] = _proxy_url
 
         is_stream = request_obj.stream
         response_id = make_bad_woman_response_id(
